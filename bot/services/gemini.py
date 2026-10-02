@@ -37,7 +37,7 @@ SYSTEM_INSTRUCTION = """
 class GeminiService:
     def __init__(self) -> None:
         self.client = genai.Client(api_key=settings.gemini_api_key)
-        self.model = "gemini-2.5-flash"
+        self.model = "gemini-3.1-flash-lite"
 
     async def _generate(self, contents: list[Any]) -> dict[str, Any]:
         config = types.GenerateContentConfig(
