@@ -58,3 +58,8 @@ async def cmd_help(message: Message) -> None:
         "   Команда: /expenses — сводка расходов."
     )
     await message.answer(text)
+
+@router.message(Command("digest"))
+async def cmd_test_digest(message: Message, bot: Bot) -> None:
+    from bot.core.scheduler import send_evening_digest
+    await send_evening_digest(bot)
