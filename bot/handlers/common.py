@@ -63,3 +63,8 @@ async def cmd_help(message: Message) -> None:
 async def cmd_test_digest(message: Message, bot: Bot) -> None:
     from bot.core.scheduler import send_evening_digest
     await send_evening_digest(bot)
+
+@router.message(Command("morning"))
+async def cmd_test_morning(message: Message, bot: Bot) -> None:
+    from bot.core.scheduler import send_morning_digest
+    await send_morning_digest(bot)

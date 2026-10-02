@@ -11,7 +11,6 @@ from bot.services.weather import get_current_weather
 
 logger = logging.getLogger(__name__)
 
-# Кэш отправленных алертов за текущие сутки: (user_id, date_str, lesson_id, alert_type)
 sent_alerts_cache: set[tuple[int, str, int, str]] = set()
 
 
@@ -64,7 +63,6 @@ async def check_lesson_alerts(bot: Bot) -> None:
             current_hhmm = now_local.strftime("%H:%M")
             weekday = now_local.isoweekday()
 
-            # Получаем пары на сегодня по порядку
             stmt = (
                 select(Lesson)
                 .where(Lesson.user_id == user.id, Lesson.day_of_week == weekday)
@@ -76,7 +74,6 @@ async def check_lesson_alerts(bot: Bot) -> None:
 
             for idx, current_lesson in enumerate(lessons):
                 if idx == 0:
-                    # Первая пара дня: оповещение за 15 минут до ее начала
                     alert_hhmm = subtract_minutes_from_hhmm(current_lesson.start_time, 15)
                     cache_key = (user.id, today_str, current_lesson.id, "first_lesson")
 
@@ -93,10 +90,9 @@ async def check_lesson_alerts(bot: Bot) -> None:
                             await bot.send_message(chat_id=user.telegram_id, text=msg)
                             sent_alerts_cache.add(cache_key)
                         except Exception as exc:
-                            logger.error("Failed to send first lesson alert to %s: %s", user.telegram_id, exc)
+                            logger.error("Failed to send first lesson alert: %s", exc)
 
                 else:
-                    # Последующие пары: оповещение строго за 5 минут до окончания предыдущей пары
                     prev_lesson = lessons[idx - 1]
                     alert_hhmm = subtract_minutes_from_hhmm(prev_lesson.end_time, 5)
                     cache_key = (user.id, today_str, current_lesson.id, "next_lesson")
@@ -116,7 +112,7 @@ async def check_lesson_alerts(bot: Bot) -> None:
                             await bot.send_message(chat_id=user.telegram_id, text=msg)
                             sent_alerts_cache.add(cache_key)
                         except Exception as exc:
-                            logger.error("Failed to send next lesson alert to %s: %s", user.telegram_id, exc)
+                            logger.error("Failed to send next lesson alert: %s", exc)
 
 
 async def send_morning_digest(bot: Bot) -> None:
@@ -136,27 +132,40 @@ async def send_morning_digest(bot: Bot) -> None:
                 w_data = await get_current_weather(user.city)
                 if w_data and "error" not in w_data:
                     weather_text = (
-                        f"🌤 Погода в г. {w_data['city']}: {w_data['temp']}°C, {w_data['description']}.\n"
+                        f"🌤 <b>Погода в г. {w_data['city']}:</b> {w_data['temp']}°C, {w_data['description']}.\n"
                         f"🧥 {w_data['advice']}\n\n"
                     )
 
-            # 2. Пары
+            # 2. Пары и расчет времени выхода
             les_stmt = (
                 select(Lesson)
                 .where(Lesson.user_id == user.id, Lesson.day_of_week == weekday)
                 .order_by(Lesson.lesson_number)
             )
             lessons = (await session.execute(les_stmt)).scalars().all()
+            commute_text = ""
+
             if lessons:
                 les_lines = ["📚 <b>Расписание на сегодня:</b>"]
                 for l in lessons:
                     room = f", ауд. {l.room}" if l.room else ""
                     les_lines.append(f"{l.lesson_number}. [{l.start_time} - {l.end_time}] {l.subject}{room}")
                 les_text = "\n".join(les_lines) + "\n\n"
+
+                # Расчет времени выхода из дома
+                if user.commute_minutes:
+                    first_lesson = lessons[0]
+                    total_sub = user.commute_minutes + 10  # 10 мин запас на проход
+                    departure = subtract_minutes_from_hhmm(first_lesson.start_time, total_sub)
+                    if departure:
+                        commute_text = (
+                            f"🚪 <b>Время выхода из дома: <u>{departure}</u></b>\n"
+                            f"⏱ В пути: ~{user.commute_minutes} мин (+10 мин запас к 1-й паре в {first_lesson.start_time})\n\n"
+                        )
             else:
                 les_text = "📚 На сегодня пар нет или расписание не заполнено.\n\n"
 
-            # 3. Горящие ДЗ
+            # 3. Дедлайны ДЗ
             hw_stmt = select(Homework).where(
                 Homework.user_id == user.id,
                 Homework.deadline_date == today_date,
@@ -171,7 +180,7 @@ async def send_morning_digest(bot: Bot) -> None:
             else:
                 hw_text = "✨ Горящих дедлайнов на сегодня нет."
 
-            full_msg = f"🌅 <b>Доброе утро! Утренний дайджест:</b>\n\n{weather_text}{les_text}{hw_text}"
+            full_msg = f"🌅 <b>Доброе утро! Утренний дайджест:</b>\n\n{weather_text}{commute_text}{les_text}{hw_text}"
             try:
                 await bot.send_message(chat_id=user.telegram_id, text=full_msg)
             except Exception as exc:
@@ -189,14 +198,12 @@ async def send_evening_digest(bot: Bot) -> None:
             tomorrow_date = now_local.date() + timedelta(days=1)
             tomorrow_weekday = (now_local.isoweekday() % 7) + 1
 
-            # 1. Статистика выполненных ДЗ
             done_stmt = select(func.count(Homework.id)).where(
                 Homework.user_id == user.id,
                 Homework.is_completed == True,  # noqa: E712
             )
             done_count = (await session.execute(done_stmt)).scalar() or 0
 
-            # 2. Пары на завтра
             stmt = (
                 select(Lesson)
                 .where(Lesson.user_id == user.id, Lesson.day_of_week == tomorrow_weekday)
@@ -213,7 +220,6 @@ async def send_evening_digest(bot: Bot) -> None:
             else:
                 tomorrow_schedule_text = "📚 На завтра пар нет в расписании.\n\n"
 
-            # 3. Дедлайны ДЗ на завтра
             hw_stmt = select(Homework).where(
                 Homework.user_id == user.id,
                 Homework.deadline_date == tomorrow_date,

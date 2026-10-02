@@ -15,10 +15,17 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow", nullable=False)
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     group_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     subgroup: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Поля маршрута и времени в пути
+    home_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    college_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    travel_mode: Mapped[str | None] = mapped_column(String(32), default="transit", nullable=True)  # transit, walking, driving
+    commute_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     lessons: Mapped[list["Lesson"]] = relationship("Lesson", back_populates="user", cascade="all, delete-orphan")
@@ -32,12 +39,12 @@ class Lesson(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    day_of_week: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 (Пн) - 7 (Вс)
-    parity: Mapped[str] = mapped_column(String(16), default="all", nullable=False)  # all, odd, even
+    day_of_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    parity: Mapped[str] = mapped_column(String(16), default="all", nullable=False)
     lesson_number: Mapped[int] = mapped_column(Integer, nullable=False)
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
-    start_time: Mapped[str] = mapped_column(String(5), nullable=False)  # HH:MM
-    end_time: Mapped[str] = mapped_column(String(5), nullable=False)    # HH:MM
+    start_time: Mapped[str] = mapped_column(String(5), default="08:30", nullable=False)
+    end_time: Mapped[str] = mapped_column(String(5), default="10:00", nullable=False)
     room: Mapped[str | None] = mapped_column(String(64), nullable=True)
     teacher: Mapped[str | None] = mapped_column(String(255), nullable=True)
     subgroup: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
