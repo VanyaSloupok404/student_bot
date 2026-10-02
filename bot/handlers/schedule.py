@@ -33,6 +33,22 @@ DEFAULT_BELL_TIMES = {
 }
 
 
+@router.message(Command("clear_schedule"))
+async def cmd_clear_schedule(message: Message, session: AsyncSession) -> None:
+    if not message.from_user:
+        return
+
+    user_res = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
+    user = user_res.scalar_one_or_none()
+    if not user:
+        await message.answer("Сначала отправьте /start.")
+        return
+
+    await session.execute(delete(Lesson).where(Lesson.user_id == user.id))
+    await session.commit()
+    await message.answer("🗑 Ваше расписание полностью очищено. Теперь можно загрузить актуальное фото.")
+
+
 @router.message(Command("schedule"))
 async def cmd_schedule(message: Message, session: AsyncSession) -> None:
     if not message.from_user:
@@ -122,8 +138,8 @@ async def handle_schedule_photo(message: Message, bot: Bot, session: AsyncSessio
         image_bytes = buffer.getvalue()
 
         now = datetime.now(timezone.utc)
-        user_comment = f" Подпись пользователя к фото: '{message.caption}'" if message.caption else ""
-        context = f"Current UTC datetime: {now.strftime('%Y-%m-%d %H:%M:%S')}, weekday: {now.isoweekday()}.{user_comment}"
+        user_comment = f"Указание пользователя: '{message.caption}'" if message.caption else "Записать все дни"
+        context = f"Current UTC datetime: {now.strftime('%Y-%m-%d %H:%M:%S')}, weekday: {now.isoweekday()}. {user_comment}"
 
         res = await gemini_service.parse_schedule(image_bytes=image_bytes, mime_type="image/jpeg", context=context)
 
@@ -139,14 +155,15 @@ async def handle_schedule_photo(message: Message, bot: Bot, session: AsyncSessio
             return
 
         lessons_to_add: list[Lesson] = []
+        processed_days = []
 
         for day in days:
             day_of_week = day.get("day_of_week")
             if not day_of_week or not isinstance(day_of_week, int):
                 continue
             parity = day.get("parity") or "all"
+            processed_days.append(DAYS_MAP.get(day_of_week, f"День {day_of_week}"))
 
-            # Удаляем старое расписание на указанный день
             await session.execute(
                 delete(Lesson).where(
                     Lesson.user_id == user.id,
@@ -180,7 +197,11 @@ async def handle_schedule_photo(message: Message, bot: Bot, session: AsyncSessio
         await session.commit()
 
         count = len(lessons_to_add)
-        await status_msg.edit_text(f"✅ Расписание успешно обновлено ({count} пар сохранено)! Нажмите /schedule для просмотра.")
+        days_str = ", ".join(dict.fromkeys(processed_days))
+        await status_msg.edit_text(
+            f"✅ Расписание сохранено для: <b>{days_str}</b> (всего {count} пар)!\n"
+            f"Используйте /schedule для просмотра всего графика или /today для текущего дня."
+        )
 
     except Exception as exc:
         logger.error("Schedule processing failed: %s", exc, exc_info=True)

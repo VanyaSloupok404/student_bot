@@ -18,9 +18,10 @@ SYSTEM_INSTRUCTION = """
 ПРАВИЛА:
 1. Ответ должен быть СТРОГО валидным JSON без markdown-блоков (без ```json).
 2. При нечитаемом изображении возвращай: {"status": "error", "error_message": "Текст нечитаем"}.
-3. Формат времени строго HH:MM (24-часовой).
+3. Формат времени строго HH:MM (24-часовой). Если время звонков не указано в таблице, ставь null.
 4. Четность недели: "all", "odd" (нечетная/числитель), "even" (четная/знаменатель).
 5. Дни недели: 1 (Пн) - 7 (Вс).
+6. ФИЛЬТРАЦИЯ ПО ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ: Всегда приоритетно учитывай подпись пользователя! Если пользователь пишет "запиши на понедельник", "только на завтра", "извлеки среду" — ты ОБЯЗАН включить в массив "days" ТОЛЬКО запрошенный день (или дни), полностью игнорируя остальные дни на изображении.
 
 СХЕМЫ:
 - Расписание:
@@ -63,7 +64,10 @@ class GeminiService:
 
     async def parse_schedule(self, image_bytes: bytes, mime_type: str = "image/jpeg", context: str = "") -> dict[str, Any]:
         image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-        prompt = f"Распознай расписание пар на фото. Контекст: {context}"
+        prompt = (
+            f"Распознай расписание пар на фото с учетом комментария пользователя: {context}. "
+            f"Если в комментарии указан конкретный день недели, верни данные ТОЛЬКО для этого дня."
+        )
         return await self._generate([image_part, prompt])
 
     async def parse_homework(self, text: str, image_bytes: bytes | None = None, mime_type: str = "image/jpeg", context: str = "") -> dict[str, Any]:
