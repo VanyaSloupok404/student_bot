@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -24,95 +25,105 @@ def subtract_minutes_from_hhmm(time_str: str, minutes: int) -> str | None:
 
 
 async def check_pending_reminders(bot: Bot) -> None:
-    now = datetime.now(timezone.utc)
-    async with async_session_maker() as session:
-        stmt = (
-            select(Reminder, User.telegram_id)
-            .join(User, Reminder.user_id == User.id)
-            .where(Reminder.trigger_datetime <= now, Reminder.is_sent == False)  # noqa: E712
-        )
-        res = await session.execute(stmt)
-        reminders = res.all()
+    try:
+        now = datetime.now(timezone.utc)
+        async with async_session_maker() as session:
+            stmt = (
+                select(Reminder, User.telegram_id)
+                .join(User, Reminder.user_id == User.id)
+                .where(Reminder.trigger_datetime <= now, Reminder.is_sent == False)  # noqa: E712
+            )
+            res = await session.execute(stmt)
+            reminders = res.all()
 
-        for rem, tg_id in reminders:
-            try:
-                await bot.send_message(
-                    chat_id=tg_id,
-                    text=f"⏰ <b>Напоминание:</b>\n{rem.text}",
-                )
-                rem.is_sent = True
-            except Exception as exc:
-                logger.error("Failed to send reminder %s to %s: %s", rem.id, tg_id, exc)
+            for rem, tg_id in reminders:
+                try:
+                    await bot.send_message(
+                        chat_id=tg_id,
+                        text=f"⏰ <b>Напоминание:</b>\n{rem.text}",
+                    )
+                    rem.is_sent = True
+                except Exception as exc:
+                    logger.error("Failed to send reminder %s: %s", rem.id, exc)
 
-        await session.commit()
+            await session.commit()
+    except (asyncio.CancelledError, GeneratorExit):
+        return
+    except Exception as exc:
+        logger.error("Error in check_pending_reminders: %s", exc)
 
 
 async def check_lesson_alerts(bot: Bot) -> None:
-    async with async_session_maker() as session:
-        users = (await session.execute(select(User))).scalars().all()
+    try:
+        async with async_session_maker() as session:
+            users = (await session.execute(select(User))).scalars().all()
 
-        for user in users:
-            tz_str = user.timezone or "Europe/Moscow"
-            try:
-                user_tz = ZoneInfo(tz_str)
-            except Exception:
-                user_tz = ZoneInfo("Europe/Moscow")
+            for user in users:
+                tz_str = user.timezone or "Europe/Moscow"
+                try:
+                    user_tz = ZoneInfo(tz_str)
+                except Exception:
+                    user_tz = ZoneInfo("Europe/Moscow")
 
-            now_local = datetime.now(user_tz)
-            today_str = now_local.strftime("%Y-%m-%d")
-            current_hhmm = now_local.strftime("%H:%M")
-            weekday = now_local.isoweekday()
+                now_local = datetime.now(user_tz)
+                today_str = now_local.strftime("%Y-%m-%d")
+                current_hhmm = now_local.strftime("%H:%M")
+                weekday = now_local.isoweekday()
 
-            stmt = (
-                select(Lesson)
-                .where(Lesson.user_id == user.id, Lesson.day_of_week == weekday)
-                .order_by(Lesson.lesson_number)
-            )
-            lessons = (await session.execute(stmt)).scalars().all()
-            if not lessons:
-                continue
+                stmt = (
+                    select(Lesson)
+                    .where(Lesson.user_id == user.id, Lesson.day_of_week == weekday)
+                    .order_by(Lesson.lesson_number)
+                )
+                lessons = (await session.execute(stmt)).scalars().all()
+                if not lessons:
+                    continue
 
-            for idx, current_lesson in enumerate(lessons):
-                if idx == 0:
-                    alert_hhmm = subtract_minutes_from_hhmm(current_lesson.start_time, 15)
-                    cache_key = (user.id, today_str, current_lesson.id, "first_lesson")
+                for idx, current_lesson in enumerate(lessons):
+                    if idx == 0:
+                        alert_hhmm = subtract_minutes_from_hhmm(current_lesson.start_time, 15)
+                        cache_key = (user.id, today_str, current_lesson.id, "first_lesson")
 
-                    if alert_hhmm == current_hhmm and cache_key not in sent_alerts_cache:
-                        room = f"\n📍 Кабинет: {current_lesson.room}" if current_lesson.room else ""
-                        teacher = f"\n👨‍🏫 Преподаватель: {current_lesson.teacher}" if current_lesson.teacher else ""
-                        msg = (
-                            f"🔔 <b>Через 15 минут начинается первая пара!</b>\n\n"
-                            f"📚 <b>{current_lesson.lesson_number} пара:</b> {current_lesson.subject}\n"
-                            f"⏰ Время: {current_lesson.start_time} - {current_lesson.end_time}"
-                            f"{room}{teacher}"
-                        )
-                        try:
-                            await bot.send_message(chat_id=user.telegram_id, text=msg)
-                            sent_alerts_cache.add(cache_key)
-                        except Exception as exc:
-                            logger.error("Failed to send first lesson alert: %s", exc)
+                        if alert_hhmm == current_hhmm and cache_key not in sent_alerts_cache:
+                            room = f"\n📍 Кабинет: {current_lesson.room}" if current_lesson.room else ""
+                            teacher = f"\n👨‍🏫 Преподаватель: {current_lesson.teacher}" if current_lesson.teacher else ""
+                            msg = (
+                                f"🔔 <b>Через 15 минут начинается первая пара!</b>\n\n"
+                                f"📚 <b>{current_lesson.lesson_number} пара:</b> {current_lesson.subject}\n"
+                                f"⏰ Время: {current_lesson.start_time} - {current_lesson.end_time}"
+                                f"{room}{teacher}"
+                            )
+                            try:
+                                await bot.send_message(chat_id=user.telegram_id, text=msg)
+                                sent_alerts_cache.add(cache_key)
+                            except Exception as exc:
+                                logger.error("Failed to send first lesson alert: %s", exc)
 
-                else:
-                    prev_lesson = lessons[idx - 1]
-                    alert_hhmm = subtract_minutes_from_hhmm(prev_lesson.end_time, 5)
-                    cache_key = (user.id, today_str, current_lesson.id, "next_lesson")
+                    else:
+                        prev_lesson = lessons[idx - 1]
+                        alert_hhmm = subtract_minutes_from_hhmm(prev_lesson.end_time, 5)
+                        cache_key = (user.id, today_str, current_lesson.id, "next_lesson")
 
-                    if alert_hhmm == current_hhmm and cache_key not in sent_alerts_cache:
-                        room = f"\n📍 Кабинет: <b>{current_lesson.room}</b>" if current_lesson.room else ""
-                        teacher = f"\n👨‍🏫 Преподаватель: {current_lesson.teacher}" if current_lesson.teacher else ""
-                        msg = (
-                            f"🔔 <b>Скоро следующая пара!</b>\n"
-                            f"<i>(Уведомление за 5 мин до конца текущей пары)</i>\n\n"
-                            f"📚 <b>{current_lesson.lesson_number} пара:</b> {current_lesson.subject}\n"
-                            f"⏰ Начало: <b>{current_lesson.start_time}</b> (до {current_lesson.end_time})\n"
-                            f"⏳ Заканчивается: {prev_lesson.subject} (в {prev_lesson.end_time})"
-                            f"{room}{teacher}"
-                        )
-                        try:
-                            await bot.send_message(chat_id=user.telegram_id, text=msg)
-                            sent_alerts_cache.add(cache_key)
-                        except Exception as exc:
-                            logger.error("Failed to send next lesson alert: %s", exc)
+                        if alert_hhmm == current_hhmm and cache_key not in sent_alerts_cache:
+                            room = f"\n📍 Кабинет: <b>{current_lesson.room}</b>" if current_lesson.room else ""
+                            teacher = f"\n👨‍🏫 Преподаватель: {current_lesson.teacher}" if current_lesson.teacher else ""
+                            msg = (
+                                f"🔔 <b>Скоро следующая пара!</b>\n"
+                                f"<i>(Уведомление за 5 мин до конца текущей пары)</i>\n\n"
+                                f"📚 <b>{current_lesson.lesson_number} пара:</b> {current_lesson.subject}\n"
+                                f"⏰ Начало: <b>{current_lesson.start_time}</b> (до {current_lesson.end_time})\n"
+                                f"⏳ Заканчивается: {prev_lesson.subject} (в {prev_lesson.end_time})"
+                                f"{room}{teacher}"
+                            )
+                            try:
+                                await bot.send_message(chat_id=user.telegram_id, text=msg)
+                                sent_alerts_cache.add(cache_key)
+                            except Exception as exc:
+                                logger.error("Failed to send next lesson alert: %s", exc)
+    except (asyncio.CancelledError, GeneratorExit):
+        return
+    except Exception as exc:
+        logger.error("Error in check_lesson_alerts: %s", exc)
 
 
 async def send_morning_digest(bot: Bot) -> None:
@@ -152,10 +163,9 @@ async def send_morning_digest(bot: Bot) -> None:
                     les_lines.append(f"{l.lesson_number}. [{l.start_time} - {l.end_time}] {l.subject}{room}")
                 les_text = "\n".join(les_lines) + "\n\n"
 
-                # Расчет времени выхода из дома
                 if user.commute_minutes:
                     first_lesson = lessons[0]
-                    total_sub = user.commute_minutes + 10  # 10 мин запас на проход
+                    total_sub = user.commute_minutes + 10
                     departure = subtract_minutes_from_hhmm(first_lesson.start_time, total_sub)
                     if departure:
                         commute_text = (
@@ -184,7 +194,7 @@ async def send_morning_digest(bot: Bot) -> None:
             try:
                 await bot.send_message(chat_id=user.telegram_id, text=full_msg)
             except Exception as exc:
-                logger.error("Morning briefing failed for user %s: %s", user.telegram_id, exc)
+                logger.error("Morning briefing failed: %s", exc)
 
 
 async def send_evening_digest(bot: Bot) -> None:
@@ -243,7 +253,7 @@ async def send_evening_digest(bot: Bot) -> None:
             try:
                 await bot.send_message(chat_id=user.telegram_id, text=full_msg)
             except Exception as exc:
-                logger.error("Evening briefing failed for user %s: %s", user.telegram_id, exc)
+                logger.error("Evening briefing failed: %s", exc)
 
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:

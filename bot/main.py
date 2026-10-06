@@ -10,7 +10,7 @@ from bot.config import settings
 from bot.core.database import async_session_maker, engine, init_db
 from bot.core.middlewares import DbSessionMiddleware
 from bot.core.scheduler import setup_scheduler
-from bot.handlers import common, commute, homework, quick_actions, schedule, weather
+from bot.handlers import common, commute, homework, quick_actions, schedule, todo, weather
 
 logging.basicConfig(
     level=settings.log_level.upper(),
@@ -41,6 +41,7 @@ async def main() -> None:
     dp.include_router(homework.router)
     dp.include_router(weather.router)
     dp.include_router(commute.router)
+    dp.include_router(todo.router)
     dp.include_router(quick_actions.router)
 
     # Запуск планировщика задач

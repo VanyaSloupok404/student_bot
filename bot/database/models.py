@@ -20,10 +20,9 @@ class User(Base):
     group_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     subgroup: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    # Поля маршрута и времени в пути
     home_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     college_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    travel_mode: Mapped[str | None] = mapped_column(String(32), default="transit", nullable=True)  # transit, walking, driving
+    travel_mode: Mapped[str | None] = mapped_column(String(32), default="transit", nullable=True)
     commute_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -32,6 +31,7 @@ class User(Base):
     homeworks: Mapped[list["Homework"]] = relationship("Homework", back_populates="user", cascade="all, delete-orphan")
     reminders: Mapped[list["Reminder"]] = relationship("Reminder", back_populates="user", cascade="all, delete-orphan")
     expenses: Mapped[list["Expense"]] = relationship("Expense", back_populates="user", cascade="all, delete-orphan")
+    todos: Mapped[list["TodoItem"]] = relationship("TodoItem", back_populates="user", cascade="all, delete-orphan")
 
 
 class Lesson(Base):
@@ -91,3 +91,15 @@ class Expense(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     user: Mapped["User"] = relationship("User", back_populates="expenses")
+
+
+class TodoItem(Base):
+    __tablename__ = "todo_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    text: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_done: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    user: Mapped["User"] = relationship("User", back_populates="todos")
