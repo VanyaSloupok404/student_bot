@@ -1,15 +1,18 @@
 import logging
+import time
 from typing import Any
-import aiohttp
-from bot.core.http import http_client
 
 from bot.config import settings
+from bot.core.http import http_client
 
 logger = logging.getLogger(__name__)
 
+# Кэш: {нормализованный_город: (timestamp, данные)}
+_weather_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+CACHE_TTL_SECONDS = 600  # 10 минут
+
 
 def generate_wardrobe_breakdown(temp: float, feels_like: float, wind_speed: float, pop: float, description: str) -> dict[str, str]:
-    # Верхняя одежда
     if feels_like < -15:
         outerwear = "Тяжелый зимний пуховик / парка с капюшоном"
         base = "Термобелье + теплый шерстяной свитер / флис"
@@ -39,11 +42,9 @@ def generate_wardrobe_breakdown(temp: float, feels_like: float, wind_speed: floa
         base = "Светлая легкая футболка, шорты / тонкие брюки"
         acc = ["Солнцезащитные очки, кепка"]
 
-    # Дождь / осадки
     if pop > 0.3 or any(w in description.lower() for w in ["дождь", "ливень", "морось"]):
         acc.append("🌧 Зонт или непромокаемый дождевик")
 
-    # Сильный ветер
     if wind_speed > 7.5:
         acc.append("💨 Ветрозащита (застегни воротник / накинь капюшон)")
 
@@ -67,6 +68,16 @@ async def get_current_weather(city: str) -> dict[str, Any] | None:
     if not settings.openweather_api_key or "your_" in settings.openweather_api_key:
         return {"error": "OPENWEATHER_API_KEY не сконфигурирован в .env"}
 
+    cache_key = city.strip().lower()
+    now_mono = time.monotonic()
+
+    # Проверка TTL-кэша в памяти
+    if cache_key in _weather_cache:
+        cached_time, cached_data = _weather_cache[cache_key]
+        if now_mono - cached_time < CACHE_TTL_SECONDS:
+            logger.debug("Returning cached weather for '%s'", city)
+            return cached_data
+
     url = "https://api.openweathermap.org/data/2.5/weather"
     params = {
         "q": city,
@@ -78,35 +89,39 @@ async def get_current_weather(city: str) -> dict[str, Any] | None:
     try:
         session = http_client.get_session()
         async with session.get(url, params=params, timeout=10) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    temp = data["main"]["temp"]
-                    feels_like = data["main"]["feels_like"]
-                    wind = data["wind"]["speed"]
-                    desc = data["weather"][0]["description"]
-                    rain_prob = 1.0 if "rain" in data else 0.0
+            if resp.status == 200:
+                data = await resp.json()
+                temp = data["main"]["temp"]
+                feels_like = data["main"]["feels_like"]
+                wind = data["wind"]["speed"]
+                desc = data["weather"][0]["description"]
+                rain_prob = 1.0 if "rain" in data else 0.0
 
-                    breakdown = generate_wardrobe_breakdown(
-                        temp=temp,
-                        feels_like=feels_like,
-                        wind_speed=wind,
-                        pop=rain_prob,
-                        description=desc,
-                    )
+                breakdown = generate_wardrobe_breakdown(
+                    temp=temp,
+                    feels_like=feels_like,
+                    wind_speed=wind,
+                    pop=rain_prob,
+                    description=desc,
+                )
 
-                    return {
-                        "city": data.get("name", city),
-                        "temp": round(temp, 1),
-                        "feels_like": round(feels_like, 1),
-                        "description": desc.capitalize(),
-                        "wind_speed": wind,
-                        "advice": breakdown["summary"],
-                        "breakdown": breakdown,
-                    }
-                elif resp.status == 404:
-                    return {"error": f"Город '{city}' не найден."}
-                else:
-                    return {"error": f"Ошибка погодного сервиса: HTTP {resp.status}"}
+                result = {
+                    "city": data.get("name", city),
+                    "temp": round(temp, 1),
+                    "feels_like": round(feels_like, 1),
+                    "description": desc.capitalize(),
+                    "wind_speed": wind,
+                    "advice": breakdown["summary"],
+                    "breakdown": breakdown,
+                }
+                # Сохраняем в кэш
+                _weather_cache[cache_key] = (now_mono, result)
+                return result
+
+            elif resp.status == 404:
+                return {"error": f"Город '{city}' не найден."}
+            else:
+                return {"error": f"Ошибка погодного сервиса: HTTP {resp.status}"}
     except Exception as exc:
         logger.error("Weather fetch failed: %s", exc)
         return {"error": f"Не удалось получить погоду: {exc}"}

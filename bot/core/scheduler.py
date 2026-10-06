@@ -168,6 +168,20 @@ async def send_morning_digest(bot: Bot) -> None:
         await session.commit()
 
         users = (await session.execute(select(User))).scalars().all()
+        if not users:
+            return
+
+        # Устранение N+1: параллельный опрос погоды только для уникальных городов
+        unique_cities = {u.city.strip().lower(): u.city.strip() for u in users if u.city}
+        city_weather_map = {}
+        if unique_cities:
+            fetch_results = await asyncio.gather(
+                *(get_current_weather(c_name) for c_name in unique_cities.values()),
+                return_exceptions=True
+            )
+            for c_key, res in zip(unique_cities.keys(), fetch_results):
+                if not isinstance(res, Exception):
+                    city_weather_map[c_key] = res
 
         for user in users:
             tz_str = user.timezone or "Europe/Moscow"
@@ -176,10 +190,10 @@ async def send_morning_digest(bot: Bot) -> None:
             weekday = now_local.isoweekday()
             today_date = now_local.date()
 
-            # 1. Погода
+            # 1. Погода (из батч-кэша)
             weather_text = ""
             if user.city:
-                w_data = await get_current_weather(user.city)
+                w_data = city_weather_map.get(user.city.strip().lower())
                 if w_data and "error" not in w_data:
                     weather_text = (
                         f"🌤 <b>Погода в г. {w_data['city']}:</b> {w_data['temp']}°C, {w_data['description']}.\n"
@@ -232,6 +246,7 @@ async def send_morning_digest(bot: Bot) -> None:
             full_msg = f"🌅 <b>Доброе утро! Утренний дайджест:</b>\n\n{weather_text}{commute_text}{les_text}{hw_text}"
             try:
                 await bot.send_message(chat_id=user.telegram_id, text=full_msg)
+                await asyncio.sleep(0.05)
             except Exception as exc:
                 logger.error("Morning briefing failed: %s", exc)
 
@@ -291,6 +306,7 @@ async def send_evening_digest(bot: Bot) -> None:
             )
             try:
                 await bot.send_message(chat_id=user.telegram_id, text=full_msg)
+                await asyncio.sleep(0.05)
             except Exception as exc:
                 logger.error("Evening briefing failed: %s", exc)
 
