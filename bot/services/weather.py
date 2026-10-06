@@ -7,32 +7,59 @@ from bot.config import settings
 logger = logging.getLogger(__name__)
 
 
-def generate_wardrobe_advice(temp: float, wind_speed: float, pop: float, description: str) -> str:
-    advice = []
-
-    # Температурные уровни
-    if temp < -10:
-        advice.append("Тяжелый мороз: надевай термобелье, пуховик, шапку и перчатки.")
-    elif temp < 0:
-        advice.append("Морозно: зимняя теплая куртка, шапка и шарф обязательны.")
-    elif temp < 10:
-        advice.append("Холодно: демисезонная куртка или теплое пальто.")
-    elif temp < 18:
-        advice.append("Прохладно: легкая куртка, толстовка или свитер.")
-    elif temp < 24:
-        advice.append("Комфортно: лонгслив, рубашка или легкая кофта.")
+def generate_wardrobe_breakdown(temp: float, feels_like: float, wind_speed: float, pop: float, description: str) -> dict[str, str]:
+    # Верхняя одежда
+    if feels_like < -15:
+        outerwear = "Тяжелый зимний пуховик / парка с капюшоном"
+        base = "Термобелье + теплый шерстяной свитер / флис"
+        acc = ["Зимняя теплая шапка", "Шарф", "Теплые перчатки / варежки"]
+    elif feels_like < -5:
+        outerwear = "Теплая зимняя куртка / пуховик"
+        base = "Плотное худи или свитер"
+        acc = ["Шапка", "Шарф", "Перчатки"]
+    elif feels_like < 5:
+        outerwear = "Демисезонная утепленная куртка или плотное пальто"
+        base = "Толстовка, свитшот или кофта"
+        acc = ["Легкая шапка или капюшон"]
+    elif feels_like < 12:
+        outerwear = "Легкая куртка, бомбер, тренч или плотная джинсовка"
+        base = "Лонгслив, толстовка или рубашка"
+        acc = []
+    elif feels_like < 18:
+        outerwear = "Ветровка, легкий кардиган или плотное худи (без куртки)"
+        base = "Футболка или рубашка с длинным рукавом"
+        acc = []
+    elif feels_like < 23:
+        outerwear = "Не требуется (можно взять легкую кофту на вечер)"
+        base = "Футболка, рубашка с коротким рукавом, поло"
+        acc = []
     else:
-        advice.append("Жарко: футболка, шорты или легкие брюки.")
+        outerwear = "Не требуется"
+        base = "Светлая легкая футболка, шорты / тонкие брюки"
+        acc = ["Солнцезащитные очки, кепка"]
 
-    # Осадки
+    # Дождь / осадки
     if pop > 0.3 or any(w in description.lower() for w in ["дождь", "ливень", "морось"]):
-        advice.append("🌧 Возьми зонт или дождевик, вероятны осадки.")
+        acc.append("🌧 Зонт или непромокаемый дождевик")
 
-    # Ветер
-    if wind_speed > 8:
-        advice.append("💨 Порывистый ветер: выбирай ветрозащитную одежду.")
+    # Сильный ветер
+    if wind_speed > 7.5:
+        acc.append("💨 Ветрозащита (застегни воротник / накинь капюшон)")
 
-    return " ".join(advice)
+    acc_str = ", ".join(acc) if acc else "Специальные аксессуары не требуются"
+
+    summary = f"На улице {temp:+.1f}°C (по ощущениям {feels_like:+.1f}°C). "
+    if "Зонт" in acc_str:
+        summary += "Высокая вероятность дождя — не забудь зонт. "
+    if wind_speed > 7.5:
+        summary += "Ощутимый холодный ветер. "
+
+    return {
+        "outerwear": outerwear,
+        "base": base,
+        "accessories": acc_str,
+        "summary": summary.strip(),
+    }
 
 
 async def get_current_weather(city: str) -> dict[str, Any] | None:
@@ -58,14 +85,22 @@ async def get_current_weather(city: str) -> dict[str, Any] | None:
                     desc = data["weather"][0]["description"]
                     rain_prob = 1.0 if "rain" in data else 0.0
 
-                    advice = generate_wardrobe_advice(temp=temp, wind_speed=wind, pop=rain_prob, description=desc)
+                    breakdown = generate_wardrobe_breakdown(
+                        temp=temp,
+                        feels_like=feels_like,
+                        wind_speed=wind,
+                        pop=rain_prob,
+                        description=desc,
+                    )
+
                     return {
                         "city": data.get("name", city),
                         "temp": round(temp, 1),
                         "feels_like": round(feels_like, 1),
                         "description": desc.capitalize(),
                         "wind_speed": wind,
-                        "advice": advice,
+                        "advice": breakdown["summary"],
+                        "breakdown": breakdown,
                     }
                 elif resp.status == 404:
                     return {"error": f"Город '{city}' не найден."}

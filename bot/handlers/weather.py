@@ -29,7 +29,39 @@ async def cmd_set_city(message: Message, command: CommandObject, session: AsyncS
 
     user.city = city_name
     await session.commit()
-    await message.answer(f"✅ Город успешно сохранен: <b>{city_name}</b>. Теперь можно запросить погоду командой /weather.")
+    await message.answer(f"✅ Город сохранен: <b>{city_name}</b>. Теперь доступны команды /wear и /weather.")
+
+
+@router.message(Command("wear"))
+@router.message(Command("outfit"))
+async def cmd_wear(message: Message, session: AsyncSession) -> None:
+    """Точная инструкция что надеть прямо сейчас в данную минуту."""
+    if not message.from_user:
+        return
+
+    user_res = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
+    user = user_res.scalar_one_or_none()
+    if not user or not user.city:
+        await message.answer("Сначала укажите ваш город командой: <code>/city Москва</code>")
+        return
+
+    data = await get_current_weather(user.city)
+    if not data or "error" in data:
+        err = data.get("error", "Сервис погоды временно недоступен") if data else "Ошибка соединения"
+        await message.answer(f"⚠️ {err}")
+        return
+
+    b = data["breakdown"]
+    text = (
+        f"🧥 <b>Что надеть прямо сейчас (г. {data['city']}):</b>\n\n"
+        f"🌡 <b>Температура:</b> {data['temp']:+.1f}°C (ощущается как <b>{data['feels_like']:+.1f}°C</b>)\n"
+        f"☁️ <b>На улице:</b> {data['description']}, ветер {data['wind_speed']} м/с\n\n"
+        f"🧥 <b>Верхняя одежда:</b> {b['outerwear']}\n"
+        f"👕 <b>Базовый слой:</b> {b['base']}\n"
+        f"🧣 <b>Аксессуары:</b> {b['accessories']}\n\n"
+        f"💡 <i>{b['summary']}</i>"
+    )
+    await message.answer(text)
 
 
 @router.message(Command("weather"))
@@ -54,6 +86,7 @@ async def cmd_weather(message: Message, session: AsyncSession) -> None:
         f"• Температура: <b>{data['temp']}°C</b> (ощущается как {data['feels_like']}°C)\n"
         f"• Состояние: {data['description']}\n"
         f"• Ветер: {data['wind_speed']} м/с\n\n"
-        f"🧥 <b>Рекомендация по одежде:</b>\n{data['advice']}"
+        f"🧥 <b>Рекомендация:</b> {data['advice']}\n"
+        f"<i>Используйте /wear для подробной раскладки по слоям одежды.</i>"
     )
     await message.answer(text)
