@@ -21,11 +21,14 @@ SYSTEM_INSTRUCTION = """
 3. Формат времени строго HH:MM (24-часовой). Если время звонков не указано в таблице, ставь null.
 4. Четность недели: "all", "odd" (нечетная/числитель), "even" (четная/знаменатель).
 5. Дни недели: 1 (Пн) - 7 (Вс).
-6. ФИЛЬТРАЦИЯ ПО ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ: Всегда приоритетно учитывай подпись пользователя! Если пользователь пишет "запиши на понедельник", "только на завтра", "извлеки среду" — ты ОБЯЗАН включить в массив "days" ТОЛЬКО запрошенный день (или дни), полностью игнорируя остальные дни на изображении.
+6. ФИЛЬТРАЦИЯ ПО ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ: Всегда приоритетно учитывай подпись пользователя! Если пользователь пишет "запиши на понедельник", "только на завтра" — ты ОБЯЗАН включить в массив "days" ТОЛЬКО запрошенный день.
 
 СХЕМЫ:
-- Расписание:
+- Расписание (сохранение):
 {"action": "save_schedule", "status": "success", "data": {"days": [{"day_of_week": 1, "parity": "all", "lessons": [{"lesson_number": 1, "subject": "Математика", "start_time": "08:30", "end_time": "10:00", "room": "306", "teacher": "Иванов И.И.", "subgroup": 0}]}]}}
+
+- Оперативное изменение расписания:
+{"action": "modify_schedule", "status": "success", "data": {"operation": "cancel_lesson | replace_lesson | move_room | add_lesson", "day_of_week": 1, "lesson_number": 2, "target_subject": "Обществознание или null", "new_subject": "Физика или null", "new_room": "204 или null", "new_teacher": null, "explanation": "Краткое описание изменения"}}
 
 - Домашнее задание:
 {"action": "save_homework", "status": "success", "data": {"subject": "Физика", "task_text": "Задачи 1-5", "deadline_date": "YYYY-MM-DD или null", "relative_deadline": "next_lesson | tomorrow | null"}}
@@ -69,6 +72,13 @@ class GeminiService:
             f"Если в комментарии указан конкретный день недели, верни данные ТОЛЬКО для этого дня."
         )
         return await self._generate([image_part, prompt])
+
+    async def parse_schedule_modification(self, text: str, context: str = "") -> dict[str, Any]:
+        prompt = (
+            f"Определи оперативное изменение расписания по тексту пользователя: '{text}'. "
+            f"Определи день недели (1-7), номер пары (1-6), операцию и параметры. Контекст: {context}"
+        )
+        return await self._generate([prompt])
 
     async def parse_homework(self, text: str, image_bytes: bytes | None = None, mime_type: str = "image/jpeg", context: str = "") -> dict[str, Any]:
         contents: list[Any] = []
