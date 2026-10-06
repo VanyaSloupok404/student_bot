@@ -109,9 +109,9 @@ async def cb_admin_restart(call: CallbackQuery, bot: Bot) -> None:
     await call.answer("Перезапуск процесса...", show_alert=True)
     await call.message.edit_text("🔄 <b>Перезапуск процесса бота...</b>\nНовый инстанс запустится через 1-2 секунды.")
 
-    # Закрываем сессию Telegram и перезапускаем процесс ОС
+    # Завершаем процесс: супервизор runit автоматически перезапустит сервис
     await bot.session.close()
-    os.execv(sys.executable, [sys.executable, "-m", "bot.main"])
+    sys.exit(0)
 
 
 @router.callback_query(F.data == "admin_broadcast_info")

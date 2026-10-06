@@ -4,15 +4,13 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from bot.core.database import async_session_maker
-from bot.database.models import Homework, Lesson, Reminder, User
+from bot.database.models import Homework, Lesson, Reminder, SentAlert, User
 from bot.services.weather import get_current_weather
 
 logger = logging.getLogger(__name__)
-
-sent_alerts_cache: set[tuple[int, str, int, str]] = set()
 
 
 def subtract_minutes_from_hhmm(time_str: str, minutes: int) -> str | None:
@@ -82,9 +80,19 @@ async def check_lesson_alerts(bot: Bot) -> None:
                 for idx, current_lesson in enumerate(lessons):
                     if idx == 0:
                         alert_hhmm = subtract_minutes_from_hhmm(current_lesson.start_time, 15)
-                        cache_key = (user.id, today_str, current_lesson.id, "first_lesson")
+                        if alert_hhmm != current_hhmm:
+                            continue
 
-                        if alert_hhmm == current_hhmm and cache_key not in sent_alerts_cache:
+                        # Проверяем персистентный статус в БД
+                        check_stmt = select(SentAlert.id).where(
+                            SentAlert.user_id == user.id,
+                            SentAlert.alert_date == today_str,
+                            SentAlert.lesson_id == current_lesson.id,
+                            SentAlert.alert_type == "first_lesson",
+                        )
+                        already_sent = (await session.execute(check_stmt)).scalar_one_or_none()
+
+                        if not already_sent:
                             room = f"\n📍 Кабинет: {current_lesson.room}" if current_lesson.room else ""
                             teacher = f"\n👨‍🏫 Преподаватель: {current_lesson.teacher}" if current_lesson.teacher else ""
                             msg = (
@@ -95,16 +103,34 @@ async def check_lesson_alerts(bot: Bot) -> None:
                             )
                             try:
                                 await bot.send_message(chat_id=user.telegram_id, text=msg)
-                                sent_alerts_cache.add(cache_key)
+                                session.add(
+                                    SentAlert(
+                                        user_id=user.id,
+                                        alert_date=today_str,
+                                        lesson_id=current_lesson.id,
+                                        alert_type="first_lesson",
+                                    )
+                                )
+                                await session.commit()
                             except Exception as exc:
                                 logger.error("Failed to send first lesson alert: %s", exc)
 
                     else:
                         prev_lesson = lessons[idx - 1]
                         alert_hhmm = subtract_minutes_from_hhmm(prev_lesson.end_time, 5)
-                        cache_key = (user.id, today_str, current_lesson.id, "next_lesson")
+                        if alert_hhmm != current_hhmm:
+                            continue
 
-                        if alert_hhmm == current_hhmm and cache_key not in sent_alerts_cache:
+                        # Проверяем персистентный статус в БД
+                        check_stmt = select(SentAlert.id).where(
+                            SentAlert.user_id == user.id,
+                            SentAlert.alert_date == today_str,
+                            SentAlert.lesson_id == current_lesson.id,
+                            SentAlert.alert_type == "next_lesson",
+                        )
+                        already_sent = (await session.execute(check_stmt)).scalar_one_or_none()
+
+                        if not already_sent:
                             room = f"\n📍 Кабинет: <b>{current_lesson.room}</b>" if current_lesson.room else ""
                             teacher = f"\n👨‍🏫 Преподаватель: {current_lesson.teacher}" if current_lesson.teacher else ""
                             msg = (
@@ -117,7 +143,15 @@ async def check_lesson_alerts(bot: Bot) -> None:
                             )
                             try:
                                 await bot.send_message(chat_id=user.telegram_id, text=msg)
-                                sent_alerts_cache.add(cache_key)
+                                session.add(
+                                    SentAlert(
+                                        user_id=user.id,
+                                        alert_date=today_str,
+                                        lesson_id=current_lesson.id,
+                                        alert_type="next_lesson",
+                                    )
+                                )
+                                await session.commit()
                             except Exception as exc:
                                 logger.error("Failed to send next lesson alert: %s", exc)
     except (asyncio.CancelledError, GeneratorExit):
@@ -128,6 +162,11 @@ async def check_lesson_alerts(bot: Bot) -> None:
 
 async def send_morning_digest(bot: Bot) -> None:
     async with async_session_maker() as session:
+        # Очищаем устаревшие записи алертов старше 3 суток
+        cleanup_limit = datetime.now(timezone.utc) - timedelta(days=3)
+        await session.execute(delete(SentAlert).where(SentAlert.created_at < cleanup_limit))
+        await session.commit()
+
         users = (await session.execute(select(User))).scalars().all()
 
         for user in users:

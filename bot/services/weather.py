@@ -1,6 +1,7 @@
 import logging
 from typing import Any
 import aiohttp
+from bot.core.http import http_client
 
 from bot.config import settings
 
@@ -75,8 +76,8 @@ async def get_current_weather(city: str) -> dict[str, Any] | None:
     }
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=10) as resp:
+        session = http_client.get_session()
+        async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     temp = data["main"]["temp"]

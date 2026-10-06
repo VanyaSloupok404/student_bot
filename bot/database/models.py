@@ -103,3 +103,13 @@ class TodoItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     user: Mapped["User"] = relationship("User", back_populates="todos")
+
+class SentAlert(Base):
+    __tablename__ = "sent_alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    alert_date: Mapped[str] = mapped_column(String(10), index=True, nullable=False)
+    lesson_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    alert_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)

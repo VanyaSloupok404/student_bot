@@ -8,6 +8,7 @@ from aiogram.enums import ParseMode
 
 from bot.config import settings
 from bot.core.database import async_session_maker, engine, init_db
+from bot.core.http import http_client
 from bot.core.middlewares import DbSessionMiddleware, MaintenanceMiddleware
 from bot.core.scheduler import setup_scheduler
 from bot.handlers import admin, common, commute, homework, quick_actions, schedule, todo, weather
@@ -61,7 +62,8 @@ async def main() -> None:
     finally:
         logger.info("Shutting down scheduler...")
         scheduler.shutdown(wait=False)
-        logger.info("Closing bot session and DB engine...")
+        logger.info("Closing bot session, HTTP client pool and DB engine...")
+        await http_client.close()
         await bot.session.close()
         await engine.dispose()
         logger.info("Application stopped cleanly.")

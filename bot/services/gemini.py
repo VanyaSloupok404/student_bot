@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Any
 
 from google import genai
@@ -38,6 +39,21 @@ SYSTEM_INSTRUCTION = """
 """
 
 
+def clean_and_parse_json(raw_text: str) -> dict[str, Any]:
+    text = raw_text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"(\{.*\})", text, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        raise
+
+
 class GeminiService:
     def __init__(self) -> None:
         self.client = genai.Client(api_key=settings.gemini_api_key)
@@ -55,12 +71,15 @@ class GeminiService:
                 contents=contents,
                 config=config,
             )
-            if not response.text:
-                return {"status": "error", "error_message": "Empty response from Gemini"}
-            return json.loads(response.text)
+            raw_text = getattr(response, "text", None)
+            if not raw_text:
+                return {"status": "error", "error_message": "Пустой ответ от модели (возможно сработал фильтр безопасности)"}
+
+            return clean_and_parse_json(raw_text)
+
         except json.JSONDecodeError as exc:
             logger.error("JSON decode error from Gemini: %s", exc)
-            return {"status": "error", "error_message": "Failed to parse JSON response"}
+            return {"status": "error", "error_message": f"Не удалось распарсить JSON: {exc}"}
         except Exception as exc:
             logger.error("Gemini API error: %s", exc)
             return {"status": "error", "error_message": str(exc)}
