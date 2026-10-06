@@ -8,9 +8,9 @@ from aiogram.enums import ParseMode
 
 from bot.config import settings
 from bot.core.database import async_session_maker, engine, init_db
-from bot.core.middlewares import DbSessionMiddleware
+from bot.core.middlewares import DbSessionMiddleware, MaintenanceMiddleware
 from bot.core.scheduler import setup_scheduler
-from bot.handlers import common, commute, homework, quick_actions, schedule, todo, weather
+from bot.handlers import admin, common, commute, homework, quick_actions, schedule, todo, weather
 
 logging.basicConfig(
     level=settings.log_level.upper(),
@@ -30,12 +30,17 @@ async def main() -> None:
     )
     dp = Dispatcher()
 
-    # Middleware сессий БД
+    # 1. Middleware режима техобслуживания (пауза)
+    dp.message.middleware(MaintenanceMiddleware())
+    dp.callback_query.middleware(MaintenanceMiddleware())
+
+    # 2. Middleware сессий БД
     db_middleware = DbSessionMiddleware(session_pool=async_session_maker)
     dp.message.middleware(db_middleware)
     dp.callback_query.middleware(db_middleware)
 
     # Регистрация функциональных роутеров
+    dp.include_router(admin.router)
     dp.include_router(common.router)
     dp.include_router(schedule.router)
     dp.include_router(homework.router)
